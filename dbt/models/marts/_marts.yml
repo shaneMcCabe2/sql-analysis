@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: dim_questions
+    description: >
+      One enriched row per SQL-family question (2020-2022): engagement metrics,
+      author reputation, accepted-answer flag, and time-to-first-answer.
+    columns:
+      - name: question_id
+        description: "Question post id (grain)."
+        tests: [unique, not_null]
+      - name: owner_reputation
+        description: "Author reputation at snapshot time (null if author deleted)."
+      - name: hours_to_first_answer
+        description: "Hours between question and its earliest answer (null if none)."
+
+  - name: fct_tag_yearly
+    description: >
+      Per-tag, per-year aggregates over the SQL-family question set. Questions
+      are exploded across all their tags, so co-occurring tags are included.
+    columns:
+      - name: tag_year_key
+        description: "Surrogate key: '<tag>|<year>' (grain)."
+        tests: [unique, not_null]
+      - name: tag
+        tests: [not_null]
+      - name: pct_answered
+        description: "Share of questions with >=1 answer (0-1)."
+      - name: pct_accepted
+        description: "Share of questions with an accepted answer (0-1)."
