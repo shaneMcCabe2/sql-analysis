@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: stg_questions
+    description: "Typed, cleaned SQL-family questions (2020-2022). Tags split to an array."
+    columns:
+      - name: question_id
+        description: "Question post id."
+        tests: [unique, not_null]
+      - name: owner_user_id
+        description: "Author; FK to stg_users.user_id (null for deleted users)."
+
+  - name: stg_answers
+    description: "Typed answers to the staged questions."
+    columns:
+      - name: answer_id
+        description: "Answer post id."
+        tests: [unique, not_null]
+      - name: question_id
+        description: "Parent question; every answer belongs to a staged question."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_questions')
+                field: question_id
+      - name: owner_user_id
+        description: "Author; FK to stg_users.user_id (null for deleted users)."
+
+  - name: stg_users
+    description: "Authors of the staged questions and answers."
+    columns:
+      - name: user_id
+        tests: [unique, not_null]
+
+  - name: stg_comments
+    description: "Comments on the staged questions and answers."
+    columns:
+      - name: comment_id
+        tests: [unique, not_null]
+
+  - name: stg_tags
+    description: "Full Stack Overflow tag dictionary."
+    columns:
+      - name: tag_id
+        tests: [unique, not_null]
+      - name: tag_name
+        tests: [unique, not_null]
