@@ -1,0 +1,32 @@
+# Declares the raw landing tables (populated by ingest/transfer.py) as dbt
+# sources, so staging models can reference them via source('raw', '<table>').
+version: 2
+
+sources:
+  - name: raw
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    schema: "{{ env_var('BQ_RAW_DATASET', 'raw') }}"
+    description: >
+      SQL-family Stack Overflow posts (2020-2022) transferred from
+      bigquery-public-data.stackoverflow (frozen snapshot, ends 2022-09-25).
+    tables:
+      - name: questions
+        description: "SQL-tagged questions. Partitioned by creation_date."
+        columns:
+          - name: id
+            description: "Question post id (primary key)."
+            tests: [unique, not_null]
+      - name: answers
+        description: "Answers to the selected questions (parent_id -> questions.id)."
+        columns:
+          - name: id
+            tests: [unique, not_null]
+      - name: users
+        description: "Authors of the selected questions/answers."
+        columns:
+          - name: id
+            tests: [unique, not_null]
+      - name: comments
+        description: "Comments on the selected questions/answers."
+      - name: tags
+        description: "Full Stack Overflow tag dictionary."

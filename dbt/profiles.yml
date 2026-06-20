@@ -1,0 +1,17 @@
+# dbt connection profile. Driven by the project .env so no secrets live here.
+# Run dbt with this dir on the profiles path, e.g.:
+#   DBT_PROFILES_DIR=$(pwd)/dbt dbt debug --project-dir dbt
+sql_analysis:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      dataset: dbt_dev
+      location: "{{ env_var('BQ_LOCATION', 'US') }}"
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
