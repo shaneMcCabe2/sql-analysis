@@ -47,6 +47,16 @@ def get_client() -> bigquery.Client:
 def run(sql: str) -> pd.DataFrame:
     return get_client().query(sql).to_dataframe()
 
+
+@st.cache_resource
+def get_anthropic_client():
+    import anthropic
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        return None
+    return anthropic.Anthropic(api_key=api_key)
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -216,6 +226,31 @@ def load_complexity_by_tier(yl: str) -> pd.DataFrame:
     """)
 
 
+@st.cache_data(ttl=3600, show_spinner="Sampling practice questions…")
+def load_practice_pool(tier: str) -> pd.DataFrame:
+    safe_tier = tier.replace("'", "")
+    return run(f"""
+        SELECT
+            q.question_id,
+            q.title,
+            q.score,
+            q.view_count,
+            ARRAY_TO_STRING(q.tags, ', ')  AS tags_str,
+            c.complexity_score,
+            c.complexity_tier,
+            c.f_join, c.f_group_by, c.f_aggregate, c.f_having,
+            c.f_case_when, c.f_set_ops, c.f_subqueries,
+            c.f_cte, c.f_window, c.f_recursive, c.f_lateral,
+            c.f_apply, c.f_pivot
+        FROM {MARTS}.dim_questions AS q
+        JOIN {MARTS}.analysis_complexity_scores AS c USING (question_id)
+        WHERE c.complexity_tier = '{safe_tier}'
+          AND c.complexity_score > 0
+        ORDER BY RAND()
+        LIMIT 50
+    """)
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_complexity_features() -> pd.DataFrame:
     return run(f"""
@@ -279,7 +314,7 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📋  Summary",
     "📈  Tag trends",
     "⬆️  Rising & falling",
@@ -289,6 +324,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🗄️  Dialect breakdown",
     "🔢  Complexity",
     "🔍  Validation",
+    "🎯  Practice",
 ])
 
 # ─── Tab 0 — Summary & key takeaways ─────────────────────────────────────────
@@ -969,3 +1005,159 @@ with tab8:
         | fct_tag_yearly sql/2020 | Mart aggregation matches a direct count from the question grain |
         """
     )
+
+# ─── Tab 9 — Practice Questions ───────────────────────────────────────────────
+
+_PRACTICE_TIERS = [
+    "1 · Trivial",
+    "2 · Basic",
+    "3 · Intermediate",
+    "4 · Advanced",
+    "5 · Expert",
+]
+
+
+def _active_features(row: pd.Series) -> str:
+    pairs = [
+        ("JOIN",                       "f_join"),
+        ("GROUP BY",                   "f_group_by"),
+        ("Aggregate functions",        "f_aggregate"),
+        ("HAVING",                     "f_having"),
+        ("CASE WHEN",                  "f_case_when"),
+        ("UNION / INTERSECT / EXCEPT", "f_set_ops"),
+        ("Subqueries",                 "f_subqueries"),
+        ("CTE (WITH … AS)",            "f_cte"),
+        ("Window functions (OVER)",    "f_window"),
+        ("Recursive CTE",              "f_recursive"),
+        ("LATERAL",                    "f_lateral"),
+        ("CROSS / OUTER APPLY",        "f_apply"),
+        ("PIVOT",                      "f_pivot"),
+    ]
+    return ", ".join(label for label, col in pairs if row.get(col, 0))
+
+
+def generate_practice_question(row: pd.Series) -> dict:
+    import json, re
+    cache_key = f"_pq_{int(row['question_id'])}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    client = get_anthropic_client()
+    if client is None:
+        return {"_error": "No ANTHROPIC_API_KEY configured."}
+
+    features = _active_features(row) or "basic SELECT / WHERE"
+    prompt = (
+        "You are a SQL practice question generator. Create a focused exercise "
+        "based on this Stack Overflow question.\n\n"
+        f"Title: \"{row['title']}\"\n"
+        f"Tags: {row['tags_str']}\n"
+        f"Difficulty: {row['complexity_tier']}\n"
+        f"SQL features: {features}\n\n"
+        "Return ONLY a JSON object with these exact keys:\n"
+        "{\n"
+        "  \"prompt\":      \"2-4 sentences with a concrete business scenario and the table(s) involved.\",\n"
+        "  \"task\":        \"A broken SQL query to debug, OR a partial query with blanks. Match the difficulty.\",\n"
+        "  \"dialect\":     \"SQL dialect inferred from tags, or Standard SQL.\",\n"
+        "  \"answer\":      \"The complete correct SQL query.\",\n"
+        "  \"explanation\": \"1-3 sentences on the key concept or fix.\"\n"
+        "}"
+    )
+
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = resp.content[0].text.strip()
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        result = json.loads(m.group()) if m else {"_error": "Could not parse response.", "_raw": text}
+
+    st.session_state[cache_key] = result
+    return result
+
+
+with tab9:
+    st.subheader("SQL Practice Questions")
+    st.caption(
+        "Each question is grounded in a real Stack Overflow scenario and synthesised by Claude. "
+        "Pick a difficulty, study the task, write your answer, then reveal the solution."
+    )
+
+    if get_anthropic_client() is None:
+        st.error(
+            "**`ANTHROPIC_API_KEY` not found in Streamlit secrets.** "
+            "Add it to `.streamlit/secrets.toml` locally or in the Streamlit Cloud Secrets editor."
+        )
+    else:
+        sel_tier = st.selectbox(
+            "Difficulty",
+            options=_PRACTICE_TIERS,
+            index=1,
+            key="pq_tier",
+        )
+
+        if st.session_state.get("_pq_last_tier") != sel_tier:
+            st.session_state["_pq_idx"]      = 0
+            st.session_state["_pq_revealed"]  = False
+            st.session_state["_pq_last_tier"] = sel_tier
+
+        pool = load_practice_pool(sel_tier)
+
+        if pool.empty:
+            st.warning(f"No questions found for tier **{sel_tier}**.")
+        else:
+            idx = st.session_state.get("_pq_idx", 0) % len(pool)
+            row = pool.iloc[idx]
+
+            with st.spinner("Generating practice question…"):
+                pq = generate_practice_question(row)
+
+            if "_error" in pq:
+                st.error(pq["_error"])
+                if "_raw" in pq:
+                    st.code(pq["_raw"])
+            else:
+                st.markdown(
+                    f"**Tier:** `{row['complexity_tier']}` &nbsp;·&nbsp; "
+                    f"**Dialect:** `{pq.get('dialect', 'SQL')}` &nbsp;·&nbsp; "
+                    f"**SO score:** {int(row['score'])} &nbsp;·&nbsp; "
+                    f"**Views:** {int(row['view_count']):,}"
+                )
+
+                st.markdown("#### Scenario")
+                st.info(pq.get("prompt", ""))
+
+                st.markdown("#### Task")
+                st.code(pq.get("task", ""), language="sql")
+
+                st.text_area(
+                    "Your answer",
+                    height=160,
+                    key=f"pq_user_{idx}_{sel_tier}",
+                    placeholder="-- Write your SQL solution here…",
+                )
+
+                c_rev, c_nxt, _ = st.columns([1, 1, 5])
+
+                if c_rev.button("Reveal answer", key=f"pq_rev_{idx}_{sel_tier}"):
+                    st.session_state["_pq_revealed"] = True
+
+                if c_nxt.button("Next question ▶", key=f"pq_nxt_{idx}_{sel_tier}"):
+                    st.session_state["_pq_idx"]     = (idx + 1) % len(pool)
+                    st.session_state["_pq_revealed"] = False
+                    st.rerun()
+
+                if st.session_state.get("_pq_revealed"):
+                    st.markdown("#### Answer")
+                    st.code(pq.get("answer", ""), language="sql")
+                    st.caption(pq.get("explanation", ""))
+
+                st.divider()
+                st.caption(
+                    f"SO question #{int(row['question_id'])} · "
+                    f"Tags: {row['tags_str']}"
+                )
