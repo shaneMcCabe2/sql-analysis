@@ -213,13 +213,120 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📋  Summary",
     "📈  Tag trends",
     "⬆️  Rising & falling",
     "✅  Answer quality",
     "🚨  Error patterns",
     "🔑  SQL feature usage",
 ])
+
+# ─── Tab 0 — Summary & key takeaways ─────────────────────────────────────────
+
+with tab0:
+    st.subheader("About this project")
+    st.markdown(
+        """
+        This dashboard analyses **~299k SQL-tagged Stack Overflow questions** from 2020–2022,
+        built end-to-end on Google Cloud:
+
+        `BigQuery public dataset` → `Python ingestion` → `dbt staging + marts` → `Streamlit`
+
+        The goal is to surface what's actually happening in the SQL ecosystem — which dialects
+        are growing, which questions go unanswered, and how advanced SQL features appear in
+        practice versus as pain points.
+        """
+    )
+
+    st.divider()
+    st.subheader("Key takeaways")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("#### 📉 Platform trend")
+        st.info(
+            "**Every major SQL tag declined in question volume 2020→2022.** "
+            "This is a platform-wide Stack Overflow shift — users increasingly find answers "
+            "via search rather than asking new questions. `sql` alone accounts for 127k questions, "
+            "2.5× the size of `mysql` at #2."
+        )
+
+        st.markdown("#### ⬆️ The modern data stack is growing")
+        st.success(
+            "Against the overall decline, **Databricks (+69%), Snowflake (+51%), and TypeScript ORMs (+43%)** "
+            "all grew from 2020 to 2022. These tags signal where hiring and adoption were accelerating "
+            "in the data space during this period."
+        )
+
+        st.markdown("#### 🏆 Pattern questions attract experts")
+        st.success(
+            "**`gaps-and-islands` (97% answered) and `greatest-n-per-group` (96%)** are the "
+            "best-served niches on Stack Overflow. Well-defined algorithmic challenges reliably "
+            "draw expert answerers — a stark contrast to environment-specific setup questions."
+        )
+
+    with col_b:
+        st.markdown("#### 🔑 Window functions: the universal solution tool")
+        st.info(
+            "`OVER()` appears **1.66× more often in accepted answers than in questions**, "
+            "`LATERAL` and `CROSS/OUTER APPLY` exceed **2×**. "
+            "These features are expert reach-for tools — people struggle with ranking and pivoting, "
+            "and window functions consistently solve it."
+        )
+
+        st.markdown("#### 🚨 Hardest errors to resolve")
+        st.warning(
+            "**Timeout / lock wait (28% accepted) and Permission denied (25%)** are the graveyard "
+            "of SQL Stack Overflow — environment-specific, no universal fix. Compare to "
+            "GROUP BY / aggregate errors at 50% accepted, where canonical answers exist."
+        )
+
+        st.markdown("#### 📦 MERGE and JSON: struggle topics")
+        st.warning(
+            "**`MERGE` (0.26×) and JSON functions (0.48×)** appear far more in questions than "
+            "in accepted answers — people ask about them but they rarely appear as solutions. "
+            "They're pain points, not tools experts reach for."
+        )
+
+    st.divider()
+    st.subheader("Pipeline architecture")
+    st.code(
+        """\
+bigquery-public-data.stackoverflow   (frozen public snapshot, ends 2022-09-25)
+        │
+        │  sql/transfer/*.sql  ·  ingest/transfer.py
+        ▼
+raw dataset  ·  ~91 GB scanned  ·  299k questions · 322k answers · 1.06M comments
+        │
+        │  dbt staging layer  (typed views, tag array parsing, FK tests)
+        ▼
+dbt_dev_staging.*  ·  stg_questions · stg_answers · stg_users · stg_comments · stg_tags
+        │
+        │  dbt marts layer  (dimensional modelling, partitioning, pre-aggregation)
+        ▼
+dbt_dev_marts.*  ·  dim_questions (299k rows)  ·  fct_tag_yearly (tag × year aggregates)
+        │
+        ▼
+Streamlit dashboard  (this app)  ·  LookML semantic layer (looker/)
+""",
+        language="text",
+    )
+
+    st.divider()
+    st.subheader("Explore the data")
+    st.markdown(
+        """
+        | Tab | Question it answers |
+        |---|---|
+        | 📈 Tag trends | Which SQL tags dominate, and how did volume change year-over-year? |
+        | ⬆️ Rising & falling | Which tags bucked the decline, and which collapsed fastest? |
+        | ✅ Answer quality | Which tags get their questions resolved — and which don't? |
+        | 🚨 Error patterns | What are the most common SQL mistakes by volume and upvote signal? |
+        | 🔑 SQL feature usage | Which advanced features appear in solutions vs. struggle topics? |
+        """
+    )
 
 # ─── Tab 1 — Tag volume trend + monthly ──────────────────────────────────────
 
