@@ -49,13 +49,17 @@ def run(sql: str) -> pd.DataFrame:
 
 
 @st.cache_resource
-def get_anthropic_client():
+def _build_anthropic_client():
     import anthropic
+    # Raises if key missing — exceptions aren't cached, so this retries until the secret exists
+    api_key = st.secrets["ANTHROPIC_API_KEY"]
+    return anthropic.Anthropic(api_key=api_key)
+
+def get_anthropic_client():
     try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
+        return _build_anthropic_client()
     except Exception:
         return None
-    return anthropic.Anthropic(api_key=api_key)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
@@ -334,14 +338,20 @@ with tab0:
     st.markdown(
         """
         This dashboard analyses **~299k SQL-tagged Stack Overflow questions** from 2020–2022,
-        built end-to-end on Google Cloud:
+        built end-to-end on Google Cloud — and closes the loop with an AI-powered practice tool:
 
-        `BigQuery public dataset` → `Python ingestion` → `dbt staging + marts` → `Streamlit`
+        `BigQuery public dataset` → `Python ingestion` → `dbt staging + marts` → `Streamlit` → `Claude API`
 
         The goal is to surface what's actually happening in the SQL ecosystem — which dialects
         are growing, which questions go unanswered, and how advanced SQL features appear in
-        practice versus as pain points.
+        practice versus as pain points — then turn those insights into targeted practice exercises.
         """
+    )
+
+    st.info(
+        "**🎯 Try the Practice Questions tab** — real Stack Overflow scenarios, complexity-scored "
+        "by the analysis pipeline, then synthesised into interactive SQL exercises by Claude "
+        "(`claude-sonnet-4-6`). Select a difficulty tier, attempt the task, and reveal the answer."
     )
 
     st.divider()
@@ -411,10 +421,16 @@ dbt_dev_staging.*  ·  stg_questions · stg_answers · stg_users · stg_comments
         │
         │  dbt marts layer  (dimensional modelling, partitioning, pre-aggregation)
         ▼
-dbt_dev_marts.*  ·  dim_questions (299k rows)  ·  fct_tag_yearly (tag × year aggregates)
+dbt_dev_marts.*  ·  dim_questions · fct_tag_yearly · analysis_complexity_scores
+                    analysis_dialect_frequency · analysis_error_patterns · analysis_keyword_frequency
         │
+        │  Streamlit  ·  live BigQuery queries, cached per session
         ▼
-Streamlit dashboard  (this app)  ·  LookML semantic layer (looker/)
+9 analysis tabs  (tag trends · dialect · complexity · errors · feature usage · …)
+        │
+        │  Claude API  (claude-sonnet-4-6)  ·  grounded in complexity scores + SO question metadata
+        ▼
+🎯  Practice Questions  ·  AI-synthesised SQL exercises from real Stack Overflow scenarios
 """,
         language="text",
     )
@@ -432,6 +448,7 @@ Streamlit dashboard  (this app)  ·  LookML semantic layer (looker/)
         | 🔑 SQL feature usage | Which advanced features appear in solutions vs. struggle topics? |
         | 🗄️ Dialect breakdown | How does MySQL, PostgreSQL, SQL Server etc. compare by volume and answer rate? |
         | 🔢 Complexity | How complex are the questions, and does complexity predict whether they get answered? |
+        | 🎯 Practice | AI-generated SQL exercises grounded in real SO scenarios — powered by Claude API |
         """
     )
 
