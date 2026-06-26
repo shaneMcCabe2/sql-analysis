@@ -214,13 +214,14 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📋  Summary",
     "📈  Tag trends",
     "⬆️  Rising & falling",
     "✅  Answer quality",
     "🚨  Error patterns",
     "🔑  SQL feature usage",
+    "🔍  Validation",
 ])
 
 # ─── Tab 0 — Summary & key takeaways ─────────────────────────────────────────
@@ -561,4 +562,109 @@ with tab5:
             "answer_to_question_ratio": "Ratio",
         }).set_index("Keyword"),
         use_container_width=True,
+    )
+
+# ─── Tab 6 — Data validation ──────────────────────────────────────────────────
+
+with tab6:
+    st.subheader("Pipeline data validation")
+    st.caption(
+        "Cross-layer consistency checks: raw → dbt staging → dbt marts. "
+        "Verifies row counts, numeric sums, and derived boolean flags haven't "
+        "drifted between pipeline layers."
+    )
+
+    @st.cache_data(ttl=3600, show_spinner="Running validation checks…")
+    def load_validation() -> pd.DataFrame:
+        RAW   = f"`{PROJECT}`.`raw`"
+        STG   = f"`{PROJECT}`.`dbt_dev_staging`"
+        return run(f"""
+            with raw_q as (
+                select
+                    count(*)                                as n,
+                    sum(score)                              as score_sum,
+                    sum(view_count)                         as view_sum,
+                    countif(accepted_answer_id is not null) as accepted_count,
+                    countif(answer_count > 0)               as answered_count
+                from {RAW}.questions
+            ),
+            dim_q as (
+                select
+                    count(*)                                as n,
+                    count(distinct question_id)             as n_unique,
+                    sum(score)                              as score_sum,
+                    sum(view_count)                         as view_sum,
+                    countif(has_accepted_answer)            as accepted_count,
+                    countif(is_answered)                    as answered_count
+                from {MARTS}.dim_questions
+            ),
+            raw_a  as (select count(*) as n from {RAW}.answers),
+            stg_a  as (select count(*) as n from {STG}.stg_answers),
+            fct_sql_2020 as (
+                select sum(num_questions) as n
+                from {MARTS}.fct_tag_yearly
+                where tag = 'sql' and creation_year = 2020
+            ),
+            dim_sql_2020 as (
+                select count(*) as n
+                from {MARTS}.dim_questions
+                where 'sql' in unnest(tags) and creation_year = 2020
+            )
+            select 'raw → dim_questions row count'                       as check_name, cast(rq.n as string) as expected, cast(dq.n as string) as actual, rq.n = dq.n as passed from raw_q rq, dim_q dq
+            union all select 'dim_questions: no duplicate question_ids', cast(dq.n as string), cast(dq.n_unique as string), dq.n = dq.n_unique from dim_q dq
+            union all select 'raw → dim_questions score sum',            cast(rq.score_sum as string), cast(dq.score_sum as string), rq.score_sum = dq.score_sum from raw_q rq, dim_q dq
+            union all select 'raw → dim_questions view count sum',       cast(rq.view_sum as string), cast(dq.view_sum as string), rq.view_sum = dq.view_sum from raw_q rq, dim_q dq
+            union all select 'has_accepted_answer matches raw',          cast(rq.accepted_count as string), cast(dq.accepted_count as string), rq.accepted_count = dq.accepted_count from raw_q rq, dim_q dq
+            union all select 'is_answered matches raw answer_count > 0', cast(rq.answered_count as string), cast(dq.answered_count as string), rq.answered_count = dq.answered_count from raw_q rq, dim_q dq
+            union all select 'raw → stg_answers row count',              cast(ra.n as string), cast(sa.n as string), ra.n = sa.n from raw_a ra, stg_a sa
+            union all select 'fct_tag_yearly sql/2020 matches dim_questions', cast(f.n as string), cast(d.n as string), f.n = d.n from fct_sql_2020 f, dim_sql_2020 d
+            order by passed asc, check_name
+        """)
+
+    val = load_validation()
+
+    n_pass = val["passed"].sum()
+    n_total = len(val)
+
+    if n_pass == n_total:
+        st.success(f"✅ All {n_total} validation checks passed")
+    else:
+        st.error(f"❌ {n_total - n_pass} of {n_total} checks failed")
+
+    # Render with coloured status column
+    display = val.copy()
+    display["Status"] = display["passed"].map({True: "✅ Pass", False: "❌ Fail"})
+    display = display.drop(columns=["passed"]).rename(columns={
+        "check_name": "Check",
+        "expected":   "Expected",
+        "actual":     "Actual",
+    })[["Check", "Expected", "Actual", "Status"]]
+
+    st.dataframe(
+        display.style.apply(
+            lambda row: [
+                "", "", "",
+                "color: green" if row["Status"].startswith("✅") else "color: red",
+            ],
+            axis=1,
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+    st.markdown(
+        """
+        **What each check validates**
+
+        | Check | Why it matters |
+        |---|---|
+        | raw → dim_questions row count | No questions silently dropped or duplicated through dbt joins |
+        | No duplicate question_ids | The LEFT JOINs to users and answers didn't fan out the grain |
+        | Score / view count sums | Numeric columns passed through without truncation or type coercion |
+        | has_accepted_answer | Derived bool matches its source column (`accepted_answer_id IS NOT NULL`) |
+        | is_answered | Derived bool matches its source column (`answer_count > 0`) |
+        | raw → stg_answers row count | Staging view over answers didn't filter any rows |
+        | fct_tag_yearly sql/2020 | Mart aggregation matches a direct count from the question grain |
+        """
     )
