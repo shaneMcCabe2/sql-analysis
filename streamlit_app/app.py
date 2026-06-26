@@ -75,14 +75,15 @@ year_list = ", ".join(str(y) for y in sorted(years))
 
 @st.cache_data(ttl=3600, show_spinner="Loading KPIs…")
 def load_kpis(yl: str) -> pd.Series:
+    # dim_questions has one row per unique question — no double-counting from multi-tag questions
     df = run(f"""
         SELECT
-            SUM(num_questions)                                          AS total_questions,
-            ROUND(SAFE_DIVIDE(SUM(num_answered), SUM(num_questions)), 4) AS pct_answered,
-            ROUND(SAFE_DIVIDE(SUM(num_accepted), SUM(num_questions)), 4) AS pct_accepted,
-            SUM(total_views)                                            AS total_views
-        FROM {MARTS}.fct_tag_yearly
-        WHERE creation_year IN ({yl})
+            COUNT(*)                                                            AS total_questions,
+            ROUND(SAFE_DIVIDE(COUNTIF(is_answered), COUNT(*)), 4)               AS pct_answered,
+            ROUND(SAFE_DIVIDE(COUNTIF(has_accepted_answer), COUNT(*)), 4)       AS pct_accepted,
+            SUM(view_count)                                                     AS total_views
+        FROM {MARTS}.dim_questions
+        WHERE EXTRACT(YEAR FROM creation_date) IN ({yl})
     """)
     return df.iloc[0]
 
