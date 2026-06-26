@@ -25,15 +25,19 @@ MARTS   = f"`{PROJECT}`.`dbt_dev_marts`"
 
 @st.cache_resource
 def get_client() -> bigquery.Client:
-    try:
+    import os
+    if "gcp_service_account" in st.secrets:
+        # Streamlit Cloud: credentials stored in secrets
         creds = service_account.Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
+            dict(st.secrets["gcp_service_account"]),
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
         return bigquery.Client(credentials=creds, project=PROJECT)
-    except (KeyError, FileNotFoundError):
-        # local dev: uses GOOGLE_APPLICATION_CREDENTIALS env var via ADC
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        # local dev: use service-account key file via ADC
         return bigquery.Client(project=PROJECT)
+    st.error("No credentials found. Add [gcp_service_account] to Streamlit secrets or set GOOGLE_APPLICATION_CREDENTIALS locally.")
+    st.stop()
 
 
 def run(sql: str) -> pd.DataFrame:
