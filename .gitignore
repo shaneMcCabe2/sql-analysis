@@ -5,6 +5,7 @@ secure/
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 
 # --- Python ---
 .venv/
