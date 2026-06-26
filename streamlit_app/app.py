@@ -26,7 +26,11 @@ MARTS   = f"`{PROJECT}`.`dbt_dev_marts`"
 @st.cache_resource
 def get_client() -> bigquery.Client:
     import os
-    if "gcp_service_account" in st.secrets:
+    try:
+        has_secret = "gcp_service_account" in st.secrets
+    except Exception:
+        has_secret = False
+    if has_secret:
         # Streamlit Cloud: credentials stored in secrets
         creds = service_account.Credentials.from_service_account_info(
             dict(st.secrets["gcp_service_account"]),
@@ -183,6 +187,58 @@ def load_error_patterns() -> pd.DataFrame:
 def load_keyword_freq() -> pd.DataFrame:
     return run(f"SELECT * FROM {MARTS}.analysis_keyword_frequency ORDER BY in_accepted_answers DESC")
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_dialect_frequency() -> pd.DataFrame:
+    return run(f"""
+        SELECT dialect, creation_year, num_questions, pct_answered, pct_accepted,
+               avg_score, total_views, avg_views
+        FROM {MARTS}.analysis_dialect_frequency
+        ORDER BY dialect, creation_year
+    """)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_complexity_by_tier(yl: str) -> pd.DataFrame:
+    return run(f"""
+        SELECT
+            complexity_tier,
+            COUNT(*)                                                            AS num_questions,
+            ROUND(SAFE_DIVIDE(COUNTIF(is_answered),       COUNT(*)), 4)        AS pct_answered,
+            ROUND(SAFE_DIVIDE(COUNTIF(has_accepted_answer), COUNT(*)), 4)      AS pct_accepted,
+            ROUND(AVG(score), 2)                                               AS avg_score,
+            ROUND(AVG(complexity_score), 1)                                    AS avg_complexity_score,
+            SUM(view_count)                                                     AS total_views
+        FROM {MARTS}.analysis_complexity_scores
+        WHERE creation_year IN ({yl})
+        GROUP BY complexity_tier
+        ORDER BY complexity_tier
+    """)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_complexity_features() -> pd.DataFrame:
+    return run(f"""
+        SELECT
+            ROUND(100 * SAFE_DIVIDE(SUM(f_select),     COUNT(*)), 1) AS select_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_where),      COUNT(*)), 1) AS where_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_order_by),   COUNT(*)), 1) AS order_by_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_join),       COUNT(*)), 1) AS join_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_group_by),   COUNT(*)), 1) AS group_by_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_aggregate),  COUNT(*)), 1) AS aggregate_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_having),     COUNT(*)), 1) AS having_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_case_when),  COUNT(*)), 1) AS case_when_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_set_ops),    COUNT(*)), 1) AS set_ops_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_subqueries), COUNT(*)), 1) AS subqueries_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_cte),        COUNT(*)), 1) AS cte_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_window),     COUNT(*)), 1) AS window_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_recursive),  COUNT(*)), 1) AS recursive_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_lateral),    COUNT(*)), 1) AS lateral_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_apply),      COUNT(*)), 1) AS apply_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_pivot),      COUNT(*)), 1) AS pivot_pct
+        FROM {MARTS}.analysis_complexity_scores
+    """)
+
 # ── Fetch data ────────────────────────────────────────────────────────────────
 
 kpis      = load_kpis(year_list)
@@ -193,6 +249,9 @@ ans_rates = load_answer_rates(year_list, min_tag_volume)
 tta       = load_time_to_answer(year_list)
 errors    = load_error_patterns()
 keywords  = load_keyword_freq()
+dialects  = load_dialect_frequency()
+cx_tiers  = load_complexity_by_tier(year_list)
+cx_feats  = load_complexity_features()
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
@@ -214,13 +273,15 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📋  Summary",
     "📈  Tag trends",
     "⬆️  Rising & falling",
     "✅  Answer quality",
     "🚨  Error patterns",
     "🔑  SQL feature usage",
+    "🗄️  Dialect breakdown",
+    "🔢  Complexity",
     "🔍  Validation",
 ])
 
@@ -327,6 +388,8 @@ Streamlit dashboard  (this app)  ·  LookML semantic layer (looker/)
         | ✅ Answer quality | Which tags get their questions resolved — and which don't? |
         | 🚨 Error patterns | What are the most common SQL mistakes by volume and upvote signal? |
         | 🔑 SQL feature usage | Which advanced features appear in solutions vs. struggle topics? |
+        | 🗄️ Dialect breakdown | How does MySQL, PostgreSQL, SQL Server etc. compare by volume and answer rate? |
+        | 🔢 Complexity | How complex are the questions, and does complexity predict whether they get answered? |
         """
     )
 
@@ -564,9 +627,236 @@ with tab5:
         use_container_width=True,
     )
 
-# ─── Tab 6 — Data validation ──────────────────────────────────────────────────
+# ─── Tab 6 — Dialect breakdown ────────────────────────────────────────────────
 
 with tab6:
+    st.subheader("SQL dialect question volume (2020–2022)")
+    st.caption(
+        "Tags mapped to 12 named dialect families. A question can count toward multiple dialects. "
+        "Filtered by the year selector in the sidebar."
+    )
+
+    dial_filt = dialects[dialects["creation_year"].isin(years)]
+
+    # Grouped bar: question volume by dialect × year
+    dial_total = (
+        dial_filt.groupby("dialect")["num_questions"].sum()
+        .reset_index()
+        .sort_values("num_questions", ascending=False)
+    )
+    top_dialects = dial_total["dialect"].tolist()
+
+    fig = px.bar(
+        dial_filt[dial_filt["dialect"].isin(top_dialects)].sort_values(
+            "num_questions", ascending=False
+        ),
+        x="dialect", y="num_questions", color="creation_year",
+        barmode="group",
+        color_discrete_sequence=px.colors.qualitative.Set2,
+        labels={"num_questions": "Questions", "dialect": "", "creation_year": "Year"},
+        category_orders={"dialect": top_dialects},
+        height=420,
+    )
+    fig.update_layout(xaxis_tickangle=-30, legend_title="Year")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Scatter: answer rate vs. total questions per dialect
+    st.subheader("Answer rate vs. question volume — by dialect")
+    dial_agg = (
+        dial_filt.groupby("dialect")
+        .agg(
+            total_questions=("num_questions", "sum"),
+            pct_answered=("pct_answered", "mean"),
+            pct_accepted=("pct_accepted", "mean"),
+            avg_score=("avg_score", "mean"),
+            total_views=("total_views", "sum"),
+        )
+        .reset_index()
+    )
+    dial_agg["pct_answered"] = dial_agg["pct_answered"].round(4)
+    dial_agg["pct_accepted"] = dial_agg["pct_accepted"].round(4)
+    dial_agg["avg_score"]    = dial_agg["avg_score"].round(2)
+
+    fig2 = px.scatter(
+        dial_agg,
+        x="total_questions", y="pct_answered",
+        size="total_views", text="dialect",
+        color="pct_accepted",
+        color_continuous_scale="RdYlGn",
+        range_color=[0.2, 0.55],
+        labels={
+            "total_questions": "Total questions",
+            "pct_answered":    "% Answered",
+            "pct_accepted":    "% Accepted",
+        },
+        hover_data={"avg_score": True, "pct_accepted": ":.1%", "total_views": ":,"},
+        height=500,
+    )
+    fig2.update_traces(textposition="top center", marker_opacity=0.8)
+    fig2.update_layout(
+        coloraxis_colorbar=dict(title="% Accepted", tickformat=".0%"),
+        yaxis_tickformat=".0%",
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+    st.caption(
+        "Bubble size = total views. Color = % accepted. "
+        "Dialects with high volume but low acceptance (lower-right) represent the most under-served communities."
+    )
+
+    st.dataframe(
+        dial_agg.rename(columns={
+            "dialect":         "Dialect",
+            "total_questions": "Questions",
+            "pct_answered":    "% Answered",
+            "pct_accepted":    "% Accepted",
+            "avg_score":       "Avg score",
+            "total_views":     "Total views",
+        }).sort_values("Questions", ascending=False).set_index("Dialect")
+        .style.format({
+            "Questions":  "{:,}",
+            "% Answered": "{:.1%}",
+            "% Accepted": "{:.1%}",
+            "Avg score":  "{:.2f}",
+            "Total views":"{:,.0f}",
+        }),
+        use_container_width=True,
+    )
+
+# ─── Tab 7 — Complexity scoring ───────────────────────────────────────────────
+
+with tab7:
+    st.subheader("SQL question complexity distribution")
+    st.caption(
+        "Each question is scored by detecting 16 SQL features in the body text via regex. "
+        "Score weights: SELECT/WHERE/ORDER BY = 1pt · GROUP BY/JOIN/Aggregate/HAVING = 2pt · "
+        "CASE WHEN/Set ops/Subquery = 3pt · CTE/Window = 5pt · Recursive/LATERAL/APPLY/PIVOT = 7pt."
+    )
+
+    tier_order = [
+        "0 · No SQL detected",
+        "1 · Trivial",
+        "2 · Basic",
+        "3 · Intermediate",
+        "4 · Advanced",
+        "5 · Expert",
+    ]
+
+    # Distribution bar chart
+    cx_sorted = cx_tiers.copy()
+    cx_sorted["complexity_tier"] = pd.Categorical(
+        cx_sorted["complexity_tier"], categories=tier_order, ordered=True
+    )
+    cx_sorted = cx_sorted.sort_values("complexity_tier")
+
+    col_dist, col_rate = st.columns(2)
+
+    with col_dist:
+        st.markdown("#### Questions per complexity tier")
+        fig = px.bar(
+            cx_sorted, x="complexity_tier", y="num_questions",
+            color="num_questions", color_continuous_scale="Blues",
+            labels={"num_questions": "Questions", "complexity_tier": ""},
+            text="num_questions",
+        )
+        fig.update_coloraxes(showscale=False)
+        fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+        fig.update_layout(xaxis_tickangle=-20)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_rate:
+        st.markdown("#### Answer rate by complexity tier")
+        fig2 = px.bar(
+            cx_sorted, x="complexity_tier", y="pct_answered",
+            color="pct_accepted",
+            color_continuous_scale="RdYlGn",
+            range_color=[0.2, 0.55],
+            labels={
+                "pct_answered": "% Answered",
+                "complexity_tier": "",
+                "pct_accepted": "% Accepted",
+            },
+            text="pct_answered",
+        )
+        fig2.update_traces(texttemplate="%{text:.1%}", textposition="outside")
+        fig2.update_layout(
+            xaxis_tickangle=-20,
+            yaxis_tickformat=".0%",
+            coloraxis_colorbar=dict(title="% Accepted", tickformat=".0%"),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # Feature frequency chart
+    st.subheader("SQL feature presence across all questions")
+    st.caption("% of questions in the selected years that contain each feature (regex match on body text).")
+
+    feat_row = cx_feats.iloc[0]
+    feat_df = pd.DataFrame({
+        "feature": [
+            "SELECT", "WHERE", "ORDER BY",
+            "JOIN", "GROUP BY", "Aggregate fn", "HAVING",
+            "CASE WHEN", "Set ops (UNION…)", "Subquery",
+            "CTE (WITH…AS)", "Window fn (OVER)",
+            "Recursive CTE", "LATERAL", "CROSS/OUTER APPLY", "PIVOT",
+        ],
+        "pct": [
+            feat_row["select_pct"],  feat_row["where_pct"],    feat_row["order_by_pct"],
+            feat_row["join_pct"],    feat_row["group_by_pct"], feat_row["aggregate_pct"],
+            feat_row["having_pct"],  feat_row["case_when_pct"],feat_row["set_ops_pct"],
+            feat_row["subqueries_pct"], feat_row["cte_pct"],   feat_row["window_pct"],
+            feat_row["recursive_pct"],  feat_row["lateral_pct"],feat_row["apply_pct"],
+            feat_row["pivot_pct"],
+        ],
+        "tier": [
+            "Basic", "Basic", "Basic",
+            "Intermediate", "Intermediate", "Intermediate", "Intermediate",
+            "Advanced", "Advanced", "Advanced",
+            "Expert", "Expert",
+            "Master", "Master", "Master", "Master",
+        ],
+    }).sort_values("pct", ascending=True)
+
+    tier_colors = {
+        "Basic":        "#74c0fc",
+        "Intermediate": "#51cf66",
+        "Advanced":     "#fcc419",
+        "Expert":       "#ff922b",
+        "Master":       "#f03e3e",
+    }
+
+    fig3 = px.bar(
+        feat_df, x="pct", y="feature", orientation="h",
+        color="tier",
+        color_discrete_map=tier_colors,
+        labels={"pct": "% of questions", "feature": "", "tier": "Complexity tier"},
+        height=520,
+    )
+    fig3.update_layout(xaxis_title="% of questions containing this feature")
+    st.plotly_chart(fig3, use_container_width=True)
+
+    st.dataframe(
+        cx_tiers.rename(columns={
+            "complexity_tier":      "Tier",
+            "num_questions":        "Questions",
+            "pct_answered":         "% Answered",
+            "pct_accepted":         "% Accepted",
+            "avg_score":            "Avg score",
+            "avg_complexity_score": "Avg complexity",
+            "total_views":          "Total views",
+        }).set_index("Tier")
+        .style.format({
+            "Questions":      "{:,}",
+            "% Answered":     "{:.1%}",
+            "% Accepted":     "{:.1%}",
+            "Avg score":      "{:.2f}",
+            "Avg complexity": "{:.1f}",
+            "Total views":    "{:,.0f}",
+        }),
+        use_container_width=True,
+    )
+
+# ─── Tab 8 — Data validation ──────────────────────────────────────────────────
+
+with tab8:
     st.subheader("Pipeline data validation")
     st.caption(
         "Cross-layer consistency checks: raw → dbt staging → dbt marts. "

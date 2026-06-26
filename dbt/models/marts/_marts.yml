@@ -28,3 +28,17 @@ models:
         description: "Share of questions with >=1 answer (0-1)."
       - name: pct_accepted
         description: "Share of questions with an accepted answer (0-1)."
+
+  - name: analysis_dialect_frequency
+    description: >
+      Per-dialect, per-year question aggregates. Maps 40+ SQL-family tags to
+      12 named dialect families (MySQL, PostgreSQL, SQL Server, Oracle, etc.).
+      A question can belong to multiple dialects; each dialect-question pair is
+      counted once. Grain: dialect × creation_year.
+
+  - name: analysis_complexity_scores
+    description: >
+      Per-question SQL complexity score derived from regex detection of 16 SQL
+      features in the question body (HTML). Score weights: Basic=1,
+      Intermediate=2, Advanced=3, Expert=5, Master=7. Tier labels map score
+      ranges to 0-Trivial through 5-Expert buckets. Grain: question_id.
