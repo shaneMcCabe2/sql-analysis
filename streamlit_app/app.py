@@ -223,6 +223,12 @@ def load_complexity_features() -> pd.DataFrame:
             ROUND(100 * SAFE_DIVIDE(SUM(f_select),     COUNT(*)), 1) AS select_pct,
             ROUND(100 * SAFE_DIVIDE(SUM(f_where),      COUNT(*)), 1) AS where_pct,
             ROUND(100 * SAFE_DIVIDE(SUM(f_order_by),   COUNT(*)), 1) AS order_by_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_insert),     COUNT(*)), 1) AS insert_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_update),     COUNT(*)), 1) AS update_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_delete),     COUNT(*)), 1) AS delete_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_create),     COUNT(*)), 1) AS create_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_alter),      COUNT(*)), 1) AS alter_pct,
+            ROUND(100 * SAFE_DIVIDE(SUM(f_drop),       COUNT(*)), 1) AS drop_pct,
             ROUND(100 * SAFE_DIVIDE(SUM(f_join),       COUNT(*)), 1) AS join_pct,
             ROUND(100 * SAFE_DIVIDE(SUM(f_group_by),   COUNT(*)), 1) AS group_by_pct,
             ROUND(100 * SAFE_DIVIDE(SUM(f_aggregate),  COUNT(*)), 1) AS aggregate_pct,
@@ -793,6 +799,7 @@ with tab7:
     feat_df = pd.DataFrame({
         "feature": [
             "SELECT", "WHERE", "ORDER BY",
+            "INSERT INTO", "UPDATE", "DELETE FROM", "CREATE TABLE/VIEW", "ALTER TABLE", "DROP",
             "JOIN", "GROUP BY", "Aggregate fn", "HAVING",
             "CASE WHEN", "Set ops (UNION…)", "Subquery",
             "CTE (WITH…AS)", "Window fn (OVER)",
@@ -800,6 +807,8 @@ with tab7:
         ],
         "pct": [
             feat_row["select_pct"],  feat_row["where_pct"],    feat_row["order_by_pct"],
+            feat_row["insert_pct"],  feat_row["update_pct"],   feat_row["delete_pct"],
+            feat_row["create_pct"],  feat_row["alter_pct"],    feat_row["drop_pct"],
             feat_row["join_pct"],    feat_row["group_by_pct"], feat_row["aggregate_pct"],
             feat_row["having_pct"],  feat_row["case_when_pct"],feat_row["set_ops_pct"],
             feat_row["subqueries_pct"], feat_row["cte_pct"],   feat_row["window_pct"],
@@ -808,6 +817,7 @@ with tab7:
         ],
         "tier": [
             "Basic", "Basic", "Basic",
+            "DML / DDL", "DML / DDL", "DML / DDL", "DML / DDL", "DML / DDL", "DML / DDL",
             "Intermediate", "Intermediate", "Intermediate", "Intermediate",
             "Advanced", "Advanced", "Advanced",
             "Expert", "Expert",
@@ -817,6 +827,7 @@ with tab7:
 
     tier_colors = {
         "Basic":        "#74c0fc",
+        "DML / DDL":    "#a9e34b",
         "Intermediate": "#51cf66",
         "Advanced":     "#fcc419",
         "Expert":       "#ff922b",

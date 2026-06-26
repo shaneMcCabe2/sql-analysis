@@ -4,6 +4,8 @@
 -- (practice-question tool, dialect × complexity cross-tabs) can filter freely.
 --
 -- Score weights:  Basic=1  ·  Intermediate=2  ·  Advanced=3  ·  Expert=5  ·  Master=7
+-- DML/DDL (INSERT/UPDATE/DELETE/CREATE/ALTER/DROP) are scored at 2pt so those
+-- questions escape the "No SQL detected" bucket while ranking below query complexity.
 -- Note: body is HTML — \bselect\b will also match <select> form elements,
 -- a known noise source. Impact is small given the SQL-scoped question set.
 {{ config(materialized = 'table') }}
@@ -34,7 +36,14 @@ features as (
         cast(regexp_contains(body_text, r'(?i)\bselect\b')          as int64) as f_select,
         cast(regexp_contains(body_text, r'(?i)\bwhere\b')           as int64) as f_where,
         cast(regexp_contains(body_text, r'(?i)\border\s+by\b')      as int64) as f_order_by,
-        -- Intermediate (2 pts each)
+        -- DML / DDL (2 pts each) — scored same as intermediate query features
+        cast(regexp_contains(body_text, r'(?i)\binsert\s+into\b')                          as int64) as f_insert,
+        cast(regexp_contains(body_text, r'(?i)\bupdate\s+\w')                              as int64) as f_update,
+        cast(regexp_contains(body_text, r'(?i)\bdelete\s+from\b')                          as int64) as f_delete,
+        cast(regexp_contains(body_text, r'(?i)\bcreate\s+(table|view|index|database|procedure|function)\b') as int64) as f_create,
+        cast(regexp_contains(body_text, r'(?i)\balter\s+table\b')                          as int64) as f_alter,
+        cast(regexp_contains(body_text, r'(?i)\bdrop\s+(table|view|index|database)\b')    as int64) as f_drop,
+        -- Intermediate query features (2 pts each)
         cast(regexp_contains(body_text, r'(?i)\bgroup\s+by\b')                              as int64) as f_group_by,
         cast(regexp_contains(body_text, r'(?i)\bjoin\b')                                    as int64) as f_join,
         cast(regexp_contains(body_text, r'(?i)\b(count|sum|avg|min|max)\s*\(')             as int64) as f_aggregate,
@@ -58,6 +67,7 @@ scored as (
     select
         *,
         (f_select * 1  + f_where * 1     + f_order_by * 1)
+        + (f_insert * 2 + f_update * 2   + f_delete * 2 + f_create * 2 + f_alter * 2 + f_drop * 2)
         + (f_group_by * 2 + f_join * 2   + f_aggregate * 2 + f_having * 2)
         + (f_case_when * 3 + f_set_ops * 3 + f_subqueries * 3)
         + (f_cte * 5 + f_window * 5)
@@ -83,6 +93,7 @@ select
         else                             '5 · Expert'
     end as complexity_tier,
     f_select, f_where, f_order_by,
+    f_insert, f_update, f_delete, f_create, f_alter, f_drop,
     f_group_by, f_join, f_aggregate, f_having,
     f_case_when, f_set_ops, f_subqueries,
     f_cte, f_window,

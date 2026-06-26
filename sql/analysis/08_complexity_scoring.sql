@@ -29,6 +29,12 @@ features as (
         cast(regexp_contains(body_text, r'(?i)\bselect\b')                                   as int64) as f_select,
         cast(regexp_contains(body_text, r'(?i)\bwhere\b')                                    as int64) as f_where,
         cast(regexp_contains(body_text, r'(?i)\border\s+by\b')                               as int64) as f_order_by,
+        cast(regexp_contains(body_text, r'(?i)\binsert\s+into\b')                            as int64) as f_insert,
+        cast(regexp_contains(body_text, r'(?i)\bupdate\s+\w')                                as int64) as f_update,
+        cast(regexp_contains(body_text, r'(?i)\bdelete\s+from\b')                            as int64) as f_delete,
+        cast(regexp_contains(body_text, r'(?i)\bcreate\s+(table|view|index|database|procedure|function)\b') as int64) as f_create,
+        cast(regexp_contains(body_text, r'(?i)\balter\s+table\b')                            as int64) as f_alter,
+        cast(regexp_contains(body_text, r'(?i)\bdrop\s+(table|view|index|database)\b')      as int64) as f_drop,
         cast(regexp_contains(body_text, r'(?i)\bgroup\s+by\b')                               as int64) as f_group_by,
         cast(regexp_contains(body_text, r'(?i)\bjoin\b')                                     as int64) as f_join,
         cast(regexp_contains(body_text, r'(?i)\b(count|sum|avg|min|max)\s*\(')              as int64) as f_aggregate,
@@ -49,6 +55,7 @@ scored as (
     select
         *,
         (f_select * 1 + f_where * 1 + f_order_by * 1)
+        + (f_insert * 2 + f_update * 2 + f_delete * 2 + f_create * 2 + f_alter * 2 + f_drop * 2)
         + (f_group_by * 2 + f_join * 2 + f_aggregate * 2 + f_having * 2)
         + (f_case_when * 3 + f_set_ops * 3 + f_subqueries * 3)
         + (f_cte * 5 + f_window * 5)
